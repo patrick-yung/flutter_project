@@ -25,9 +25,25 @@ class PatientsTest {
 
   Map<String, dynamic> toJson() {
     return {
+      '_id': id, // Include id in toJson
       'testType': testType,
       'testResult': testResult,
       // testDate will be added automatically by backend
     };
+  }
+  
+  // Add a copyWith method for easy updates
+  PatientsTest copyWith({
+    String? id,
+    String? testType,
+    String? testResult,
+    DateTime? testDate,
+  }) {
+    return PatientsTest(
+      id: id ?? this.id,
+      testType: testType ?? this.testType,
+      testResult: testResult ?? this.testResult,
+      testDate: testDate ?? this.testDate,
+    );
   }
 }

@@ -1,4 +1,4 @@
-// lib/view_patients.dart
+// lib/view_patients.dart (Keep as is, it has its own AppBar)
 import 'package:flutter/material.dart';
 import 'Models/patients_table.dart';
 import 'Models/patients.dart';
@@ -14,11 +14,11 @@ class ViewPatients extends StatefulWidget {
 }
 
 class _ViewPatientsState extends State<ViewPatients> {
-  List<Patient> allPatients = []; // Store all patients
-  List<Patient> displayedPatients = []; // Store filtered patients
+  List<Patient> allPatients = [];
+  List<Patient> displayedPatients = [];
   bool _isLoading = true;
   String? _errorMessage;
-  bool _showOnlyCritical = false; // Filter state
+  bool _showOnlyCritical = false;
 
   @override
   void initState() {
@@ -36,7 +36,7 @@ class _ViewPatientsState extends State<ViewPatients> {
       final fetchedPatients = await PatientApiService.getPatients();
       setState(() {
         allPatients = fetchedPatients;
-        _applyFilter(); // Apply filter after fetching
+        _applyFilter();
         _isLoading = false;
       });
     } catch (e) {
@@ -47,7 +47,6 @@ class _ViewPatientsState extends State<ViewPatients> {
     }
   }
 
-  // Toggle filter and update displayed patients
   void _toggleFilter() {
     setState(() {
       _showOnlyCritical = !_showOnlyCritical;
@@ -55,16 +54,14 @@ class _ViewPatientsState extends State<ViewPatients> {
     });
   }
 
-  // Apply the current filter to the patient list
   void _applyFilter() {
     if (_showOnlyCritical) {
       displayedPatients = allPatients.where((patient) => patient.critial).toList();
     } else {
-      displayedPatients = List.from(allPatients); // Show all patients
+      displayedPatients = List.from(allPatients);
     }
   }
 
-  // Get the count text based on filter
   String _getPatientCountText() {
     if (_showOnlyCritical) {
       return '${displayedPatients.length} Critical Patients';
@@ -88,7 +85,6 @@ class _ViewPatientsState extends State<ViewPatients> {
         elevation: 1,
         backgroundColor: Colors.white,
         foregroundColor: Colors.blue.shade800,
-        // Removed the filter button from AppBar
       ),
       body: Container(
         padding: const EdgeInsets.all(16),
@@ -105,59 +101,9 @@ class _ViewPatientsState extends State<ViewPatients> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Header with refresh button
-            Padding(
-              padding: const EdgeInsets.only(bottom: 20),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Patient Records',
-                          style: TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.w700,
-                            color: Colors.blue.shade900,
-                            letterSpacing: -0.5,
-                          ),
-                        ),
-                        if (_showOnlyCritical)
-                          Container(
-                            margin: const EdgeInsets.only(top: 4),
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: Colors.red.shade50,
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: Colors.red.shade200),
-                            ),
-                            child: const Text(
-                              'FILTER: CRITICAL ONLY',
-                              style: TextStyle(
-                                color: Colors.red,
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.refresh),
-                    onPressed: _fetchPatients,
-                    color: Colors.blue.shade800,
-                  ),
-                ],
-              ),
-            ),
-
-            // Patient count badge with filter button RIGHT NEXT TO IT
+            // Patient count badge with filter button
             Row(
               children: [
-                // Patient count badge
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   decoration: BoxDecoration(
@@ -189,9 +135,8 @@ class _ViewPatientsState extends State<ViewPatients> {
                   ),
                 ),
                 
-                const SizedBox(width: 12), // Space between badge and filter button
+                const SizedBox(width: 12),
                 
-                // Filter button right next to patient count
                 Container(
                   decoration: BoxDecoration(
                     color: _showOnlyCritical ? Colors.red.shade50 : Colors.grey.shade200,
@@ -232,11 +177,11 @@ class _ViewPatientsState extends State<ViewPatients> {
                   ),
                 ),
                 
-                const Spacer(), // Push everything to the left
+                const Spacer(),
               ],
             ),
 
-            const SizedBox(height: 20), // Space after filter row
+            const SizedBox(height: 20),
 
             // Table Card
             Expanded(

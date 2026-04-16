@@ -20,6 +20,7 @@ class PatientsScreen extends StatefulWidget {
 
 class _PatientsScreenState extends State<PatientsScreen> {
   List<Patient> _patients = [];
+  bool _isDeleting = false;
 
   @override
   void initState() {
@@ -44,49 +45,54 @@ class _PatientsScreenState extends State<PatientsScreen> {
     return Colors.transparent;
   }
 
-  Future<void> _deletePatient(String patientId) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete Patient'),
-        content: const Text('Are you sure you want to delete this patient?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
+  Future<void> _deletePatient(String patientId, int index) async {
+    // Prevent multiple deletions
+    if (_isDeleting) return;
+    
+    setState(() {
+      _isDeleting = true;
+    });
 
-    if (confirm != true) return;
+    // Store the patient for potential rollback
+    final deletedPatient = _patients[index];
+    
+    // Optimistically remove from UI
+    setState(() {
+      _patients.removeAt(index);
+    });
 
     try {
       await PatientApiService.deletePatient(patientId);
-      // Refresh the parent view
+      
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Patient deleted successfully'),
             backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
           ),
         );
-        // Navigate back to refresh the list
-        Navigator.pop(context);
       }
     } catch (e) {
+      // If delete fails, add the patient back
       if (mounted) {
+        setState(() {
+          _patients.insert(index, deletedPatient);
+        });
+        
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Failed to delete patient: $e'),
             backgroundColor: Colors.red,
+            duration: Duration(seconds: 3),
           ),
         );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isDeleting = false;
+        });
       }
     }
   }
@@ -208,15 +214,20 @@ class _PatientsScreenState extends State<PatientsScreen> {
                     ),
                 ],
               ),
-              trailing: IconButton(
-                icon: Icon(
-                  Icons.delete,
-                  color: patient.critial ? Colors.red : Colors.grey.shade600,
-                ),
-                onPressed: () => _deletePatient(patient.id),
-              ),
+              trailing: _isDeleting 
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : IconButton(
+                      icon: Icon(
+                        Icons.delete,
+                        color: patient.critial ? Colors.red : Colors.grey.shade600,
+                      ),
+                      onPressed: () => _deletePatient(patient.id, index),
+                    ),
               onTap: () {
-                // Navigate to PatientDetails screen instead of showing bottom sheet
                 Navigator.push(
                   context,
                   MaterialPageRoute(

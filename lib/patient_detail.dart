@@ -1,5 +1,6 @@
 // lib/patient_details.dart
 import 'package:flutter/material.dart';
+import 'package:fl_chart/fl_chart.dart';
 import 'Models/patients.dart';
 import 'Models/patients_test.dart';
 import 'Backend/patient_api_service.dart';
@@ -15,10 +16,26 @@ class PatientDetails extends StatefulWidget {
 
 class _PatientDetailsState extends State<PatientDetails> {
   late Patient _patient;
-  bool _isLoading = true; // Start with loading true
+  bool _isLoading = true;
   String? _errorMessage;
+  
+  // Filter state
+  String? _selectedFilterType;
+  List<PatientsTest> _filteredTests = [];
+  
+  // Graph view state
+  bool _showGraph = false;
 
-  // Test types
+  // Test types for filter
+  final List<String> _filterTypes = [
+    'All',
+    'Blood Type',
+    'Blood Pressure',
+    'Blood Sugar',
+    'Blood Count',
+  ];
+
+  // Test types for adding new test
   final List<String> _testTypes = [
     'Blood Type',
     'Blood Pressure',
@@ -41,6 +58,10 @@ class _PatientDetailsState extends State<PatientDetails> {
   // Critical checkbox state
   bool _isCriticalChecked = false;
 
+  // Edit form controllers
+  final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _ageController = TextEditingController();
+
   // Blood pressure thresholds
   static const int SYSTOLIC_HIGH_THRESHOLD = 180;
   static const int SYSTOLIC_LOW_THRESHOLD = 90;
@@ -50,8 +71,10 @@ class _PatientDetailsState extends State<PatientDetails> {
   @override
   void initState() {
     super.initState();
-    _fetchPatientData(); // Fetch fresh data when screen opens
-    // Add listener to blood pressure controller
+    _patient = widget.patient;
+    _filteredTests = _patient.tests;
+    _selectedFilterType = 'All';
+    _fetchPatientData();
     _bloodPressureController.addListener(_checkBloodPressureForCritical);
   }
 
@@ -61,22 +84,39 @@ class _PatientDetailsState extends State<PatientDetails> {
     _bloodPressureController.dispose();
     _bloodSugarController.dispose();
     _bloodCountController.dispose();
+    _nameController.dispose();
+    _ageController.dispose();
     super.dispose();
   }
 
-  // Check if blood pressure value is critical
+  void _applyFilter(String? filterType) {
+    setState(() {
+      _selectedFilterType = filterType;
+      _showGraph = false; // Reset graph view when filter changes
+      if (filterType == null || filterType == 'All') {
+        _filteredTests = _patient.tests;
+      } else {
+        _filteredTests = _patient.tests.where((test) => test.testType == filterType).toList();
+      }
+    });
+  }
+
+  void _toggleGraphView() {
+    setState(() {
+      _showGraph = !_showGraph;
+    });
+  }
+
   bool _isBloodPressureCritical(String bpValue) {
-    // Parse blood pressure value (expected format: "systolic/diastolic")
     final parts = bpValue.split('/');
     if (parts.length != 2) return false;
     
     try {
       final systolic = int.tryParse(parts[0].trim());
-      final diastolic = int.tryParse(parts[1].trim().split(' ')[0]); // Remove unit if present
+      final diastolic = int.tryParse(parts[1].trim().split(' ')[0]);
       
       if (systolic == null || diastolic == null) return false;
       
-      // Check if blood pressure is dangerously high or low
       return (systolic >= SYSTOLIC_HIGH_THRESHOLD || 
               systolic <= SYSTOLIC_LOW_THRESHOLD ||
               diastolic >= DIASTOLIC_HIGH_THRESHOLD || 
@@ -86,7 +126,6 @@ class _PatientDetailsState extends State<PatientDetails> {
     }
   }
 
-  // Listener for blood pressure controller
   void _checkBloodPressureForCritical() {
     if (_selectedTestType == 'Blood Pressure') {
       final bpValue = _bloodPressureController.text.trim();
@@ -97,6 +136,8 @@ class _PatientDetailsState extends State<PatientDetails> {
   }
 
   Future<void> _fetchPatientData() async {
+    if (!mounted) return;
+    
     setState(() {
       _isLoading = true;
       _errorMessage = null;
@@ -107,6 +148,7 @@ class _PatientDetailsState extends State<PatientDetails> {
       if (mounted) {
         setState(() {
           _patient = updatedPatient;
+          _applyFilter(_selectedFilterType);
           _isLoading = false;
         });
       }
@@ -135,6 +177,192 @@ class _PatientDetailsState extends State<PatientDetails> {
     });
   }
 
+  // NEW METHOD: Toggle critical status
+  Future<void> _toggleCriticalStatus() async {
+    final newCriticalStatus = !_patient.critial;
+    
+    // Show confirmation dialog
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(newCriticalStatus ? 'Mark as Critical?' : 'Remove Critical Status?'),
+        content: Text(
+          newCriticalStatus 
+              ? 'Are you sure you want to mark ${_patient.name} as critical?'
+              : 'Are you sure you want to remove the critical status from ${_patient.name}?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(
+              foregroundColor: newCriticalStatus ? Colors.red : Colors.green,
+            ),
+            child: Text(newCriticalStatus ? 'Yes, Mark Critical' : 'Yes, Remove'),
+          ),
+        ],
+      ),
+    );
+    
+    if (confirm != true) return;
+    
+    setState(() {
+      _isLoading = true;
+    });
+    
+    try {
+      final updatedPatient = await PatientApiService.updatePatientCriticalStatus(
+        patientId: _patient.id,
+        critical: newCriticalStatus,
+      );
+      
+      if (mounted) {
+        setState(() {
+          _patient = updatedPatient;
+          _isLoading = false;
+        });
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              newCriticalStatus 
+                  ? '${_patient.name} has been marked as CRITICAL!'
+                  : 'Critical status removed from ${_patient.name}',
+            ),
+            backgroundColor: newCriticalStatus ? Colors.red : Colors.green,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to update critical status: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  // NEW METHOD: Edit patient details
+  Future<void> _editPatientDetails() async {
+    // Populate controllers with current values
+    _nameController.text = _patient.name;
+    _ageController.text = _patient.age.toString();
+    
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Edit Patient Details'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _nameController,
+              decoration: const InputDecoration(
+                labelText: 'Name',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.person),
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _ageController,
+              decoration: const InputDecoration(
+                labelText: 'Age',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.calendar_today),
+              ),
+              keyboardType: TextInputType.text,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    
+    if (result != true) return;
+    
+    // Validate inputs
+    final newName = _nameController.text.trim();
+    final newAge = _ageController.text.trim();
+    
+    if (newName.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Name cannot be empty'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+    
+    if (newAge.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Age cannot be empty'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+    
+    setState(() {
+      _isLoading = true;
+    });
+    
+    try {
+      final updatedPatient = await PatientApiService.updatePatientDetails(
+        patientId: _patient.id,
+        name: newName,
+        age: newAge,
+      );
+      
+      if (mounted) {
+        setState(() {
+          _patient = updatedPatient;
+          _isLoading = false;
+        });
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Patient details updated successfully'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to update patient details: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   Future<void> _addTest() async {
     if (_selectedTestType == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -146,7 +374,6 @@ class _PatientDetailsState extends State<PatientDetails> {
       return;
     }
 
-    // Validate based on test type
     String testResult = '';
     bool shouldUpdateCritical = false;
     
@@ -176,7 +403,6 @@ class _PatientDetailsState extends State<PatientDetails> {
         }
         testResult = _bloodPressureController.text.trim();
         
-        // Check if we should update critical status based on blood pressure
         if (_isBloodPressureCritical(testResult)) {
           shouldUpdateCritical = true;
         }
@@ -214,33 +440,34 @@ class _PatientDetailsState extends State<PatientDetails> {
     });
 
     try {
-      // Create test object
       final newTest = PatientsTest(
-        id: '', // Will be assigned by backend
+        id: '',
         testType: _selectedTestType!,
         testResult: testResult,
         testDate: DateTime.now(),
       );
 
-      // Determine final critical status
-      // If user manually checked the box or blood pressure indicates critical, set to true
       final bool finalCriticalStatus = _patient.critial || _isCriticalChecked || shouldUpdateCritical;
 
-      // Call API to add test
       await PatientApiService.addPatientTests(
         patientId: _patient.id,
         tests: [newTest],
         critial: finalCriticalStatus,
       );
 
-      // Refresh patient data to show the new test
-      await _fetchPatientData();
-
+      final updatedPatient = await PatientApiService.getPatient(_patient.id);
+      
       if (mounted) {
+        setState(() {
+          _patient = updatedPatient;
+          _applyFilter(_selectedFilterType);
+          _isLoading = false;
+        });
+
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              finalCriticalStatus && !_patient.critial 
+              finalCriticalStatus && !widget.patient.critial 
                   ? 'Test added successfully. Patient marked as CRITICAL!' 
                   : 'Test added successfully'
             ),
@@ -249,7 +476,6 @@ class _PatientDetailsState extends State<PatientDetails> {
         );
       }
 
-      // Reset form
       _resetForm();
     } catch (e) {
       if (mounted) {
@@ -266,64 +492,10 @@ class _PatientDetailsState extends State<PatientDetails> {
     }
   }
 
-  Future<void> _deleteTest(String testId) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete Test'),
-        content: const Text('Are you sure you want to delete this test?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirm != true) return;
-
-    setState(() {
-      _isLoading = true;
-    });
-
-    try {
-      await PatientApiService.deletePatientTest(_patient.id, testId);
-      await _fetchPatientData(); // Refresh after delete
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Test deleted successfully'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to delete test: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
-  }
-
   String _formatDate(DateTime date) {
     return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
   }
 
-  // Get icon for test type
   IconData _getTestIcon(String testType) {
     switch (testType) {
       case 'Blood Type':
@@ -339,7 +511,6 @@ class _PatientDetailsState extends State<PatientDetails> {
     }
   }
 
-  // Get color for test type
   Color _getTestColor(String testType) {
     switch (testType) {
       case 'Blood Type':
@@ -355,13 +526,180 @@ class _PatientDetailsState extends State<PatientDetails> {
     }
   }
 
+  // Parse numeric value from test result
+  double _parseNumericValue(String result, String testType) {
+    try {
+      if (testType == 'Blood Pressure') {
+        // For blood pressure, we'll use systolic value for the graph
+        final parts = result.split('/');
+        if (parts.isNotEmpty) {
+          return double.tryParse(parts[0].trim()) ?? 0;
+        }
+      } else {
+        // For blood sugar and blood count, extract the first number
+        final match = RegExp(r'(\d+\.?\d*)').firstMatch(result);
+        if (match != null) {
+          return double.tryParse(match.group(1) ?? '0') ?? 0;
+        }
+      }
+    } catch (e) {
+      return 0;
+    }
+    return 0;
+  }
+
+  // Build graph for numeric test types
+  Widget _buildGraph() {
+    if (_filteredTests.isEmpty) {
+      return const Center(
+        child: Text('No data to display'),
+      );
+    }
+
+    // Sort tests by date
+    final sortedTests = List<PatientsTest>.from(_filteredTests)
+      ..sort((a, b) => a.testDate.compareTo(b.testDate));
+
+    return Container(
+      height: 300,
+      padding: const EdgeInsets.all(16),
+      child: LineChart(
+        LineChartData(
+          gridData: FlGridData(
+            show: true,
+            drawVerticalLine: true,
+            horizontalInterval: _getYInterval(),
+            verticalInterval: 1,
+          ),
+          titlesData: FlTitlesData(
+            show: true,
+            rightTitles: AxisTitles(
+              sideTitles: SideTitles(showTitles: false),
+            ),
+            topTitles: AxisTitles(
+              sideTitles: SideTitles(showTitles: false),
+            ),
+            bottomTitles: AxisTitles(
+              sideTitles: SideTitles(
+                showTitles: true,
+                reservedSize: 30,
+                interval: 1,
+                getTitlesWidget: (value, meta) {
+                  if (value >= 0 && value < sortedTests.length) {
+                    final date = sortedTests[value.toInt()].testDate;
+                    return Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        '${date.month}/${date.day}',
+                        style: const TextStyle(fontSize: 10),
+                      ),
+                    );
+                  }
+                  return const Text('');
+                },
+              ),
+            ),
+            leftTitles: AxisTitles(
+              sideTitles: SideTitles(
+                showTitles: true,
+                interval: _getYInterval(),
+                reservedSize: 40,
+                getTitlesWidget: (value, meta) {
+                  return Text(value.toInt().toString());
+                },
+              ),
+            ),
+          ),
+          borderData: FlBorderData(
+            show: true,
+            border: Border.all(color: Colors.grey.shade300),
+          ),
+          minX: 0,
+          maxX: (sortedTests.length - 1).toDouble(),
+          minY: _getMinYValue(),
+          maxY: _getMaxYValue(),
+          lineBarsData: [
+            LineChartBarData(
+              spots: _generateSpots(sortedTests),
+              isCurved: true,
+              color: _getTestColor(_selectedFilterType!),
+              barWidth: 3,
+              isStrokeCapRound: true,
+              dotData: FlDotData(
+                show: true,
+                getDotPainter: (spot, percent, barData, index) {
+                  return FlDotCirclePainter(
+                    radius: 4,
+                    color: _getTestColor(_selectedFilterType!),
+                    strokeWidth: 2,
+                    strokeColor: Colors.white,
+                  );
+                },
+              ),
+              belowBarData: BarAreaData(
+                show: true,
+                color: _getTestColor(_selectedFilterType!).withOpacity(0.1),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<FlSpot> _generateSpots(List<PatientsTest> tests) {
+    List<FlSpot> spots = [];
+    for (int i = 0; i < tests.length; i++) {
+      final value = _parseNumericValue(tests[i].testResult, _selectedFilterType!);
+      spots.add(FlSpot(i.toDouble(), value));
+    }
+    return spots;
+  }
+
+  double _getMinYValue() {
+    if (_filteredTests.isEmpty) return 0;
+    
+    double min = double.infinity;
+    for (var test in _filteredTests) {
+      final value = _parseNumericValue(test.testResult, _selectedFilterType!);
+      if (value < min) min = value;
+    }
+    return (min - 10).clamp(0, double.infinity);
+  }
+
+  double _getMaxYValue() {
+    if (_filteredTests.isEmpty) return 100;
+    
+    double max = 0;
+    for (var test in _filteredTests) {
+      final value = _parseNumericValue(test.testResult, _selectedFilterType!);
+      if (value > max) max = value;
+    }
+    return max + 10;
+  }
+
+  double _getYInterval() {
+    final range = _getMaxYValue() - _getMinYValue();
+    if (range <= 20) return 5;
+    if (range <= 50) return 10;
+    if (range <= 100) return 20;
+    return 50;
+  }
+
+  // Check if current filter type supports graph
+  bool _canShowGraph() {
+    return _selectedFilterType == 'Blood Pressure' ||
+           _selectedFilterType == 'Blood Sugar' ||
+           _selectedFilterType == 'Blood Count';
+  }
+
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
+    if (_isLoading && _patient.tests.isEmpty && _errorMessage == null) {
       return Scaffold(
         appBar: AppBar(
           title: const Text('Loading...'),
-          backgroundColor: widget.patient.critial ? Colors.red : Colors.blue,
+          backgroundColor: _patient.critial ? Colors.red : Colors.blue,
         ),
         body: const Center(
           child: CircularProgressIndicator(),
@@ -397,6 +735,8 @@ class _PatientDetailsState extends State<PatientDetails> {
       );
     }
 
+    final canShowGraph = _canShowGraph();
+
     return Scaffold(
       appBar: AppBar(
         title: Text(
@@ -406,6 +746,21 @@ class _PatientDetailsState extends State<PatientDetails> {
         backgroundColor: _patient.critial ? Colors.red : Colors.blue,
         foregroundColor: Colors.white,
         actions: [
+          // Edit button
+          IconButton(
+            icon: const Icon(Icons.edit),
+            tooltip: 'Edit Patient Details',
+            onPressed: _editPatientDetails,
+          ),
+          // Toggle critical status button
+          IconButton(
+            icon: Icon(
+              _patient.critial ? Icons.medical_services : Icons.warning,
+              color: Colors.white,
+            ),
+            tooltip: _patient.critial ? 'Remove Critical Status' : 'Mark as Critical',
+            onPressed: _toggleCriticalStatus,
+          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _refreshPatient,
@@ -449,7 +804,6 @@ class _PatientDetailsState extends State<PatientDetails> {
                   ),
                   child: Column(
                     children: [
-                      // Patient Avatar
                       CircleAvatar(
                         radius: 40,
                         backgroundColor: _patient.critial ? Colors.red.shade100 : Colors.blue.shade100,
@@ -463,8 +817,6 @@ class _PatientDetailsState extends State<PatientDetails> {
                         ),
                       ),
                       const SizedBox(height: 16),
-                      
-                      // Patient Details
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
@@ -498,8 +850,6 @@ class _PatientDetailsState extends State<PatientDetails> {
                         ],
                       ),
                       const SizedBox(height: 8),
-                      
-                      // Critical Status
                       if (_patient.critial)
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -523,6 +873,54 @@ class _PatientDetailsState extends State<PatientDetails> {
                             ],
                           ),
                         ),
+                      const SizedBox(height: 12),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          // Edit button in card
+                          OutlinedButton.icon(
+                            onPressed: _editPatientDetails,
+                            icon: const Icon(Icons.edit, size: 18),
+                            label: const Text('Edit Details'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: _patient.critial ? Colors.red : Colors.blue,
+                              side: BorderSide(
+                                color: _patient.critial ? Colors.red : Colors.blue,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          // Critical toggle button in card
+                          _patient.critial
+                              ? OutlinedButton.icon(
+                                  onPressed: _toggleCriticalStatus,
+                                  icon: const Icon(Icons.check_circle, size: 18),
+                                  label: const Text('Non-Critical'),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: Colors.green,
+                                    side: const BorderSide(color: Colors.green),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(20),
+                                    ),
+                                  ),
+                                )
+                              : OutlinedButton.icon(
+                                  onPressed: _toggleCriticalStatus,
+                                  icon: const Icon(Icons.warning, size: 18),
+                                  label: const Text('Mark Critical'),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: Colors.red,
+                                    side: const BorderSide(color: Colors.red),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(20),
+                                    ),
+                                  ),
+                                ),
+                        ],
+                      ),
                     ],
                   ),
                 ),
@@ -554,8 +952,6 @@ class _PatientDetailsState extends State<PatientDetails> {
                         ),
                       ),
                       const SizedBox(height: 16),
-                      
-                      // Test Type Dropdown
                       Container(
                         decoration: BoxDecoration(
                           border: Border.all(color: Colors.grey.shade300),
@@ -588,7 +984,6 @@ class _PatientDetailsState extends State<PatientDetails> {
                           onChanged: (value) {
                             setState(() {
                               _selectedTestType = value;
-                              // Clear previous selections
                               _selectedBloodType = null;
                               _bloodPressureController.clear();
                               _bloodSugarController.clear();
@@ -601,7 +996,6 @@ class _PatientDetailsState extends State<PatientDetails> {
                       
                       const SizedBox(height: 16),
                       
-                      // Dynamic Input based on test type
                       if (_selectedTestType != null) ...[
                         Container(
                           padding: const EdgeInsets.all(12),
@@ -634,7 +1028,6 @@ class _PatientDetailsState extends State<PatientDetails> {
                               ),
                               const SizedBox(height: 12),
                               
-                              // Blood Type Selection
                               if (_selectedTestType == 'Blood Type')
                                 Wrap(
                                   spacing: 8,
@@ -659,7 +1052,6 @@ class _PatientDetailsState extends State<PatientDetails> {
                                   }).toList(),
                                 ),
                               
-                              // Blood Pressure Input
                               if (_selectedTestType == 'Blood Pressure')
                                 Column(
                                   children: [
@@ -677,7 +1069,6 @@ class _PatientDetailsState extends State<PatientDetails> {
                                       ),
                                     ),
                                     
-                                    // Critical Checkbox (only shown for blood pressure)
                                     if (_bloodPressureController.text.trim().isNotEmpty)
                                       Container(
                                         margin: const EdgeInsets.only(top: 12),
@@ -739,7 +1130,6 @@ class _PatientDetailsState extends State<PatientDetails> {
                                   ],
                                 ),
                               
-                              // Blood Sugar Input
                               if (_selectedTestType == 'Blood Sugar')
                                 TextField(
                                   controller: _bloodSugarController,
@@ -755,7 +1145,6 @@ class _PatientDetailsState extends State<PatientDetails> {
                                   ),
                                 ),
                               
-                              // Blood Count Input
                               if (_selectedTestType == 'Blood Count')
                                 TextField(
                                   controller: _bloodCountController,
@@ -776,7 +1165,6 @@ class _PatientDetailsState extends State<PatientDetails> {
                         
                         const SizedBox(height: 16),
                         
-                        // Add Test Button
                         SizedBox(
                           width: double.infinity,
                           child: ElevatedButton.icon(
@@ -804,138 +1192,236 @@ class _PatientDetailsState extends State<PatientDetails> {
 
                 const SizedBox(height: 16),
 
-                // Tests Header
+                // Filter Section
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Row(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        'Test History',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: _patient.critial ? Colors.red.shade800 : Colors.blue.shade800,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Colors.grey.shade200,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Text(
-                          '${_patient.tests.length}',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey.shade700,
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            'Test History',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: _patient.critial ? Colors.red.shade800 : Colors.blue.shade800,
+                            ),
                           ),
+                          Row(
+                            children: [
+                              if (canShowGraph && _filteredTests.isNotEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.only(right: 8),
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      color: _showGraph 
+                                          ? _getTestColor(_selectedFilterType!).withOpacity(0.2)
+                                          : Colors.grey.shade200,
+                                      borderRadius: BorderRadius.circular(20),
+                                      border: Border.all(
+                                        color: _showGraph 
+                                            ? _getTestColor(_selectedFilterType!)
+                                            : Colors.grey.shade400,
+                                      ),
+                                    ),
+                                    child: Material(
+                                      color: Colors.transparent,
+                                      child: InkWell(
+                                        onTap: _toggleGraphView,
+                                        borderRadius: BorderRadius.circular(20),
+                                        child: Padding(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 12,
+                                            vertical: 4,
+                                          ),
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Icon(
+                                                _showGraph ? Icons.list : Icons.show_chart,
+                                                size: 16,
+                                                color: _showGraph 
+                                                    ? _getTestColor(_selectedFilterType!)
+                                                    : Colors.grey.shade700,
+                                              ),
+                                              const SizedBox(width: 4),
+                                              Text(
+                                                _showGraph ? 'List' : 'Graph',
+                                                style: TextStyle(
+                                                  fontSize: 12,
+                                                  color: _showGraph 
+                                                      ? _getTestColor(_selectedFilterType!)
+                                                      : Colors.grey.shade700,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: Colors.grey.shade200,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Text(
+                                  '${_filteredTests.length}/${_patient.tests.length}',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey.shade700,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      // Filter Chips
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: _filterTypes.map((type) {
+                            final isSelected = _selectedFilterType == type;
+                            return Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: FilterChip(
+                                label: Text(type),
+                                selected: isSelected,
+                                onSelected: (selected) {
+                                  _applyFilter(selected ? type : 'All');
+                                },
+                                backgroundColor: Colors.grey.shade100,
+                                selectedColor: type == 'All' 
+                                    ? Colors.blue.shade100 
+                                    : _getTestColor(type).withOpacity(0.2),
+                                checkmarkColor: type == 'All' 
+                                    ? Colors.blue 
+                                    : _getTestColor(type),
+                                labelStyle: TextStyle(
+                                  color: isSelected 
+                                      ? (type == 'All' ? Colors.blue : _getTestColor(type))
+                                      : Colors.grey.shade700,
+                                  fontWeight: isSelected ? FontWeight.bold : null,
+                                ),
+                              ),
+                            );
+                          }).toList(),
                         ),
                       ),
                     ],
                   ),
                 ),
 
-                // Tests List
+                const SizedBox(height: 8),
+
+                // Graph or List View
                 Expanded(
-                  child: _patient.tests.isEmpty
+                  child: _filteredTests.isEmpty
                       ? Center(
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
                               Icon(
-                                Icons.science,
+                                Icons.filter_list,
                                 size: 48,
                                 color: Colors.grey.shade400,
                               ),
                               const SizedBox(height: 16),
                               Text(
-                                'No tests recorded',
+                                _selectedFilterType == 'All' 
+                                    ? 'No tests recorded'
+                                    : 'No $_selectedFilterType tests found',
                                 style: TextStyle(
                                   fontSize: 16,
                                   color: Colors.grey.shade600,
                                 ),
                               ),
-                              const SizedBox(height: 8),
-                              Text(
-                                'Add a test using the form above',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.grey.shade500,
+                              if (_selectedFilterType != 'All')
+                                TextButton(
+                                  onPressed: () => _applyFilter('All'),
+                                  child: const Text('Show all tests'),
                                 ),
-                              ),
                             ],
                           ),
                         )
-                      : ListView.builder(
-                          padding: const EdgeInsets.all(16),
-                          itemCount: _patient.tests.length,
-                          itemBuilder: (context, index) {
-                            final test = _patient.tests[index];
-                            final testColor = _getTestColor(test.testType);
-                            
-                            return Card(
-                              margin: const EdgeInsets.only(bottom: 8),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                side: BorderSide(
-                                  color: testColor.withOpacity(0.3),
-                                  width: 1,
-                                ),
-                              ),
-                              child: ListTile(
-                                contentPadding: const EdgeInsets.all(12),
-                                leading: CircleAvatar(
-                                  backgroundColor: testColor.withOpacity(0.2),
-                                  child: Icon(
-                                    _getTestIcon(test.testType),
-                                    color: testColor,
-                                    size: 20,
-                                  ),
-                                ),
-                                title: Text(
-                                  test.testType,
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    color: testColor,
-                                  ),
-                                ),
-                                subtitle: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      'Result: ${test.testResult}',
-                                      style: const TextStyle(fontSize: 14),
+                      : _showGraph && canShowGraph
+                          ? _buildGraph()
+                          : ListView.builder(
+                              key: ValueKey('${_selectedFilterType}_${_filteredTests.length}'),
+                              padding: const EdgeInsets.all(16),
+                              itemCount: _filteredTests.length,
+                              itemBuilder: (context, index) {
+                                final test = _filteredTests[index];
+                                final testColor = _getTestColor(test.testType);
+                                
+                                return Card(
+                                  margin: const EdgeInsets.only(bottom: 8),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                    side: BorderSide(
+                                      color: testColor.withOpacity(0.3),
+                                      width: 1,
                                     ),
-                                    const SizedBox(height: 2),
-                                    Row(
+                                  ),
+                                  child: ListTile(
+                                    contentPadding: const EdgeInsets.all(12),
+                                    leading: CircleAvatar(
+                                      backgroundColor: testColor.withOpacity(0.2),
+                                      child: Icon(
+                                        _getTestIcon(test.testType),
+                                        color: testColor,
+                                        size: 20,
+                                      ),
+                                    ),
+                                    title: Text(
+                                      test.testType,
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        color: testColor,
+                                      ),
+                                    ),
+                                    subtitle: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
-                                        Icon(
-                                          Icons.access_time,
-                                          size: 12,
-                                          color: Colors.grey.shade500,
-                                        ),
-                                        const SizedBox(width: 4),
+                                        const SizedBox(height: 4),
                                         Text(
-                                          _formatDate(test.testDate),
-                                          style: TextStyle(
-                                            fontSize: 11,
-                                            color: Colors.grey.shade500,
-                                          ),
+                                          'Result: ${test.testResult}',
+                                          style: const TextStyle(fontSize: 14),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Row(
+                                          children: [
+                                            Icon(
+                                              Icons.access_time,
+                                              size: 12,
+                                              color: Colors.grey.shade500,
+                                            ),
+                                            const SizedBox(width: 4),
+                                            Text(
+                                              _formatDate(test.testDate),
+                                              style: TextStyle(
+                                                fontSize: 11,
+                                                color: Colors.grey.shade500,
+                                              ),
+                                            ),
+                                          ],
                                         ),
                                       ],
                                     ),
-                                  ],
-                                ),
-                                trailing: IconButton(
-                                  icon: const Icon(Icons.delete, color: Colors.red, size: 20),
-                                  onPressed: () => _deleteTest(test.id),
-                                ),
-                              ),
-                            );
-                          },
-                        ),
+                                    trailing: const IconButton(
+                                      icon: Icon(Icons.delete, color: Colors.red, size: 20),
+                                      onPressed: null, // Disabled
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
                 ),
 
                 // Return Button

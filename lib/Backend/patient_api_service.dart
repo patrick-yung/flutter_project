@@ -81,6 +81,38 @@ class PatientApiService {
     }
   }
 
+  // NEW METHOD: Update patient critical status using PATCH
+  static Future<Patient> updatePatientCriticalStatus({
+    required String patientId,
+    required bool critical,
+  }) async {
+    try {
+      final response = await http.patch(
+        Uri.parse('$_baseUrl/patients/$patientId'),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          'critical': critical,
+        }),
+      );
+
+      print('Update Critical Status Response status: ${response.statusCode}');
+      print('Update Critical Status Response body: ${response.body}');
+
+      if (response.statusCode == 200) {
+        return Patient.fromJson(jsonDecode(response.body));
+      } else if (response.statusCode == 404) {
+        throw Exception('Patient not found');
+      } else {
+        throw Exception('Failed to update critical status: ${response.statusCode}');
+      }
+    } catch (e) {
+      print('Error updating critical status: $e');
+      rethrow;
+    }
+  }
+
   // Add tests to a patient
   static Future<List<PatientsTest>> addPatientTests({
     required String patientId,
@@ -89,11 +121,11 @@ class PatientApiService {
   }) async {
     try {
       // Convert tests to JSON format expected by backend
-      final testsJson = tests.map((test) => {
+      final testsJson = tests.map((test) => ({
         'testType': test.testType,
         'testResult': test.testResult,
         // testDate will be added automatically by backend
-      }).toList();
+      })).toList();
 
       final response = await http.post(
         Uri.parse('$_baseUrl/patients/$patientId/test'),
@@ -202,4 +234,44 @@ class PatientApiService {
       rethrow;
     }
   }
+  // Update patient details (name and age)
+
+// Update patient details (name and age)
+static Future<Patient> updatePatientDetails({
+  required String patientId,
+  required String name,
+  required String age,
+}) async {
+  try {
+    // First, get the current patient to retrieve the existing department
+    final currentPatient = await getPatient(patientId);
+    
+    final response = await http.put(
+      Uri.parse('$_baseUrl/patients/$patientId'),
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        'name': name,
+        'age': age,
+        'deparment': currentPatient.department, // Use existing department
+        'critical': currentPatient.critial, // Keep existing critical status
+      }),
+    );
+
+    print('Update Patient Details Response status: ${response.statusCode}');
+    print('Update Patient Details Response body: ${response.body}');
+
+    if (response.statusCode == 200) {
+      return Patient.fromJson(jsonDecode(response.body));
+    } else if (response.statusCode == 404) {
+      throw Exception('Patient not found');
+    } else {
+      throw Exception('Failed to update patient details: ${response.statusCode}');
+    }
+  } catch (e) {
+    print('Error updating patient details: $e');
+    rethrow;
+  }
+}
 }
